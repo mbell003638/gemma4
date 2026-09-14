@@ -18,6 +18,7 @@ import { getDeviceSpeechStatus, startDeviceSpeechRecognition } from "@/src/utils
 import { continueVoiceTransaction, interpretVoiceTransaction, type PendingVoiceClarification, type VoiceInterpretationResult } from "@/src/accountingV2/voiceInterpretationRouter";
 import { interpretNeedleVoiceCommand } from "@/src/utils/onDeviceLlm";
 import { speakOnDevice } from "@/src/utils/deviceTts";
+import { gemmaPackStatus, hasReadyGemmaCapability } from "@/src/utils/gemmaNative";
 
 type Phase = "idle" | "recording" | "processing" | "confirm" | "error";
 
@@ -182,7 +183,10 @@ export default function VoiceFab() {
           setPhase("recording");
           return;
         }
-        if (mode === "android-device") throw new Error(status.reason || "Android device speech recognition is unavailable.");
+        if (mode === "android-device") {
+          const gemma = await gemmaPackStatus();
+          if (!hasReadyGemmaCapability(gemma, 'audio')) throw new Error(status.reason || "Android device speech recognition and Gemma audio are unavailable.");
+        }
       }
       await startVoiceRecorder(recorder);
       setPhase("recording");

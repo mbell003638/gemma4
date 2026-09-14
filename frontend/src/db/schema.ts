@@ -17,7 +17,7 @@ export const COLLECTIONS = [
   'debtors', 'invoices', 'quotes', 'receipts', 'creditNotes', 'debitNotes', 'deliveryNotes', 'cashEntries',
 ] as const;
 export type CollectionName = typeof COLLECTIONS[number];
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export const V2_TABLES = [
   'v2_books', 'v2_personas', 'v2_parties', 'v2_accounts', 'v2_periods', 'v2_sources',
@@ -204,6 +204,23 @@ export function schemaSql(): string {
       op_id TEXT NOT NULL, book_sequence INTEGER, created_at TEXT NOT NULL,
       PRIMARY KEY(book_id, aggregate_type, aggregate_id)
     );
+    CREATE TABLE IF NOT EXISTS assistant_proposals (
+      id TEXT PRIMARY KEY,
+      book_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      normalized_json TEXT NOT NULL,
+      scope_json TEXT NOT NULL,
+      entity_versions_json TEXT NOT NULL,
+      digest TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('pending','applied','cancelled','expired')),
+      result_json TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(book_id, request_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_assistant_proposals_book_state ON assistant_proposals(book_id, state, created_at);
     CREATE INDEX IF NOT EXISTS idx_sync_outbox_status ON sync_outbox(book_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_sync_applied_book_seq ON sync_applied_ops(book_id, book_sequence);
     CREATE INDEX IF NOT EXISTS idx_sync_conflicts_status ON sync_conflicts(book_id, status, created_at);

@@ -6,6 +6,8 @@ import {
   runOptionalOnDeviceModel,
 } from '../utils/onDeviceLlm';
 import { OPTIONAL_ON_DEVICE_MODELS, type LedgrOnDeviceToolCall } from './onDeviceTools';
+import { askWithLiveGemma } from './gemma/liveGemmaAsk';
+import { stageLiveProposal, type DurableProposalPreview } from './gemma/liveProposalController';
 
 function trimSnapshot(dataContext: string): string {
   return dataContext.length > 4000 ? `${dataContext.slice(0, 4000)}\n[truncated]` : dataContext;
@@ -40,7 +42,7 @@ export async function askBooksOnDevice(
   /** Injected so this module never imports `api`, which would pull the whole
    *  app into its module graph. The Ask screen passes runReadTool. */
   runRead?: (call: LedgrOnDeviceToolCall) => Promise<string>,
-): Promise<{ answer: string; action: any } | null> {
+): Promise<{ answer: string; action: any; durableProposal?: DurableProposalPreview } | null> {
   const mutation = isExplicitBookMutationRequest(question);
   if (mutation) {
     const action = await interpretNeedleAskAction(question);
@@ -62,6 +64,28 @@ export async function askBooksOnDevice(
     }
   } catch {
     /* Needle is optional; fall through to the prose pack. */
+  }
+
+  // A verified Gemma pack reads the live book through typed, scope-checked
+  // tools. It never receives the broad serialized snapshot below.
+  {
+    try {
+      const gemma = await askWithLiveGemma(question, mutation);
+      if (gemma?.kind === 'stopped') return {
+        answer: 'The local request stopped. Check the active book and model status before trying again. Nothing was posted.',
+        action: null,
+      };
+      if (gemma?.kind === 'answer') return { answer: gemma.text, action: null };
+      if (gemma?.kind === 'clarification') return { answer: gemma.text, action: null };
+      if (gemma?.kind === 'proposal') {
+        const durableProposal = await stageLiveProposal(gemma.proposal);
+        return { answer: 'I prepared this Ledgr change for your review. Nothing has been posted.', action: null, durableProposal };
+      }
+    } catch {
+      // An unavailable runtime returns null. A failed active turn must not be
+      // silently retried against a different model or a newly selected book.
+      return { answer: 'The local request could not finish safely. Please check the active book and try again. Nothing was posted.', action: null };
+    }
   }
 
   const installed = await bestOnDevicePack(['text']);

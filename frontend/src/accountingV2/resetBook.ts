@@ -45,6 +45,7 @@ export async function factoryResetV2Data(db: SqlRunner): Promise<void> {
 
   await db.exec('SAVEPOINT v2_factory_reset');
   try {
+    await db.run('DELETE FROM assistant_proposals');
     // Clear the self-referential reversal links so ON DELETE RESTRICT on
     // reversal_of cannot reject the wholesale journal delete.
     await db.run('UPDATE v2_journal_entries SET reversal_of=NULL');
@@ -71,6 +72,7 @@ export async function deleteV2BookData(db: SqlRunner, bookId: string): Promise<b
 
   await db.exec('SAVEPOINT v2_delete_book');
   try {
+    await db.run('DELETE FROM assistant_proposals WHERE book_id=?', [bookId]);
     await db.run('DELETE FROM v2_payslips WHERE pay_run_id IN (SELECT id FROM v2_pay_runs WHERE book_id=?)', [bookId]);
     await db.run('DELETE FROM v2_pay_runs WHERE book_id=?', [bookId]);
     await db.run('DELETE FROM v2_employees WHERE book_id=?', [bookId]);
@@ -116,6 +118,7 @@ export async function resetV2AccountingData(db: SqlRunner, bookId: string, perio
 
   await db.exec('SAVEPOINT v2_reset_book');
   try {
+    await db.run('DELETE FROM assistant_proposals WHERE book_id=?', [bookId]);
     await db.run('DELETE FROM v2_payslips WHERE pay_run_id IN (SELECT id FROM v2_pay_runs WHERE book_id=?)', [bookId]);
     await db.run('DELETE FROM v2_pay_runs WHERE book_id=?', [bookId]);
     await db.run('DELETE FROM v2_employees WHERE book_id=?', [bookId]);

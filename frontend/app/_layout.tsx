@@ -17,6 +17,7 @@ import { requireAuth } from "@/src/utils/lock";
 import { scheduleBackgroundLock } from "@/src/utils/systemPrompt";
 import { api } from "@/src/api";
 import { installAssistantLinkingHandlers } from "@/src/utils/assistantLinking";
+import { setAssistantSessionState } from "@/src/utils/assistantSessionState";
 
 
 // Keep scrolling functional while removing platform scrollbar chrome globally.
@@ -240,6 +241,11 @@ export default function RootLayout() {
   const [unlocking, setUnlocking] = useState(false);
   const shouldUnlockOnActive = React.useRef(false);
   const backgroundLockTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setAssistantSessionState({ storageReady, unlocked });
+    return () => setAssistantSessionState({ storageReady: false, unlocked: false });
+  }, [storageReady, unlocked]);
 
   const attemptUnlock = React.useCallback(async () => {
     if (Platform.OS === "web") {

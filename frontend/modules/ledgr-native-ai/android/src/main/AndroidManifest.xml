@@ -1,1 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    Optional native libraries for the LiteRT-LM GPU path.
+
+    Declared with required="false" so a device without OpenCL still installs
+    and runs: the vision backend falls back or reports unsupported rather than
+    the app becoming uninstallable on hardware that only ever needed Needle.
+
+    These take effect only once the litertlm dependency is enabled in
+    build.gradle, which is currently blocked on the Kotlin toolchain conflict
+    recorded there.
+  -->
+  <application>
+    <uses-native-library android:name="libvndksupport.so" android:required="false" />
+    <uses-native-library android:name="libOpenCL.so" android:required="false" />
+  </application>
+</manifest>

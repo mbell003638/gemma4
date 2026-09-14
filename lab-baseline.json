@@ -1,0 +1,8 @@
+{
+  "product": "Codex on-device",
+  "sourceBranch": "codex-sol-on-device-ai",
+  "baselineCommit": "badb3c738abda0ac70c875c44ccdbe078dcf02c2",
+  "experimentBranch": "codex/gemma4-p0-p3",
+  "needlePath": "frontend/scripts/on-device-ai/needle2-ledgr.cact",
+  "needleSha256": "24982abc3ed97b36192a16b0ea2758698c1a300853c01ab69e9decb3852d140f"
+}

@@ -14,6 +14,8 @@ describe('Android native AI integration', () => {
       'expo.modules.ledgrnativeai.LedgrTtsModule',
     ]));
     expect(read('modules/ledgr-native-ai/android/build.gradle')).toContain("com.google.mlkit:text-recognition");
+    expect(read('modules/ledgr-native-ai/android/build.gradle')).toContain('ndkVersion rootProject.ext.ndkVersion');
+    expect(read('scripts/on-device-ai/fetch-native.mjs')).toContain('shell: false');
     const speechModule = read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/LedgrSpeechRecognizerModule.kt');
     expect(speechModule).toContain('SpeechRecognizer.createSpeechRecognizer');
     expect(speechModule).toContain('this@LedgrSpeechRecognizerModule');
@@ -23,7 +25,7 @@ describe('Android native AI integration', () => {
     expect(read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/LedgrLocalOcrModule.kt')).toContain('recognizePdf');
     expect(read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/LedgrSpeechRecognizerModule.kt')).toContain('EXTRA_PREFER_OFFLINE, true');
     expect(read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/LedgrTtsModule.kt')).toContain('TextToSpeech');
-    expect(read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/LedgrOnDeviceLlmModule.kt')).toContain('needle2.cact');
+    expect(read('modules/ledgr-native-ai/android/src/legacy/java/expo/modules/ledgrnativeai/LedgrOnDeviceLlmModule.kt')).toContain('needle2.cact');
     expect(read('modules/ledgr-native-ai/android/src/main/cpp/needle_jni.cpp')).toContain('needle_complete');
     expect(read('modules/ledgr-native-ai/android/src/main/java/expo/modules/ledgrnativeai/NeedleJni.kt')).toContain('loadLibrary("needle_jni")');
   });
@@ -51,5 +53,25 @@ describe('Android native AI integration', () => {
     expect(api).toContain('recognizeLocal: recognizeLocalOcr');
     expect(router).toContain('request.recognizeLocal(request.input.uri)');
     expect(scan).toContain('uri: asset.uri');
+  });
+
+  it('keeps Kotlin 2.4 opt-in and reproducible across Expo prebuilds', () => {
+    const appConfig = JSON.parse(read('app.json'));
+    expect(appConfig.expo.plugins).toContain('./plugins/withGemmaAndroidToolchain');
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const plugin = require('../plugins/withGemmaAndroidToolchain');
+    const projectInput = "dependencies {\n    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')\n}";
+    const settingsInput = 'expoAutolinking.useExpoVersionCatalog()';
+    const projectOutput = plugin.patchProjectBuildGradle(projectInput);
+    const settingsOutput = plugin.patchSettingsGradle(settingsInput);
+
+    expect(projectOutput).toContain("projectProperties.get('ledgrGemmaEnabled') == 'true'");
+    expect(projectOutput).toContain("kotlin-gradle-plugin:2.4.0");
+    expect(projectOutput).toContain("classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')");
+    expect(settingsOutput).toContain("version('kotlin', '2.4.0')");
+    expect(settingsOutput).toContain("version('ksp', '2.3.10')");
+    expect(plugin.patchProjectBuildGradle(projectOutput)).toBe(projectOutput);
+    expect(plugin.patchSettingsGradle(settingsOutput)).toBe(settingsOutput);
   });
 });

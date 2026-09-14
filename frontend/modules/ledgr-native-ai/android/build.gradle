@@ -6,8 +6,17 @@ plugins {
 group = 'expo.modules.ledgrnativeai'
 version = '1.0.0'
 
+// Compile exactly one bridge. Ordinary builds retain the shipping Kotlin
+// toolchain; the tracked Expo plugin selects the validated Gemma toolchain only
+// when this opt-in property is enabled.
+def gemmaEnabled = project.findProperty('ledgrGemmaEnabled') == 'true'
+
 android {
   namespace "expo.modules.ledgrnativeai"
+  ndkVersion rootProject.ext.ndkVersion
+  sourceSets {
+    main.java.srcDirs += gemmaEnabled ? ['src/gemma/java'] : ['src/legacy/java']
+  }
   defaultConfig {
     versionCode 1
     versionName "1.0.0"
@@ -18,13 +27,17 @@ android {
 }
 
 def needleLib = file("src/main/jniLibsStatic/arm64-v8a/libneedle.a")
+// Standalone audit packages must never silently omit the existing engine.
+if (project.findProperty('ledgrRequireNeedle') == 'true' && !needleLib.exists()) {
+  throw new GradleException('Missing local libneedle.a; prepare dependencies before the standalone audit build')
+}
 if (needleLib.exists()) {
   android {
     defaultConfig {
       externalNativeBuild {
         cmake {
           cppFlags "-std=c++17"
-          arguments "-DANDROID_STL=c++_shared"
+          arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
         }
       }
     }
@@ -38,8 +51,25 @@ if (needleLib.exists()) {
 
 dependencies {
   implementation 'com.google.mlkit:text-recognition:16.0.1'
-  // Runs the downloaded .task model packs. Published on Google's Maven, not
-  // Maven Central. LiteRT-LM, which reads .litertlm, has no Android artifact,
-  // so .task is the only container we can load without vendoring a C++ runtime.
+
+  // Runs the legacy downloaded .task model packs. Retained until the Gemma
+  // device gates pass: a user with Qwen or Phi already installed must not lose
+  // the model they downloaded because a newer runtime is being trialled.
+  // Removal is a deliberate later step (plan 05 s7), after remeasuring size.
   implementation 'com.google.mediapipe:tasks-genai:0.10.35'
+
+  // Reads .litertlm and runs Gemma 4 E2B/E4B with manual tool calling.
+  //
+  // The earlier comment here said LiteRT-LM had no Android artifact. That was
+  // true when it was written and is no longer: 0.17.0 is published on Google's
+  // Maven and its classes were verified with javap (see spikes/gemma4).
+  //
+  // LiteRT-LM 0.17.0 carries Kotlin 2.4 metadata. The tracked config plugin
+  // conditionally selects Kotlin 2.4.0/KSP 2.3.10 for this variant while
+  // ordinary builds remain on Kotlin 2.1.20. Both arm64 variants have compiled
+  // and packaged successfully without suppressing metadata checks. A physical
+  // device is still required for runtime model and modality gates.
+  if (gemmaEnabled) {
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.17.0'
+  }
 }

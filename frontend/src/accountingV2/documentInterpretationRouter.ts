@@ -74,7 +74,10 @@ export async function analyzeDocumentLocalFirst(request: RouteRequest): Promise<
           source: 'on-device-llm',
           notice: 'On-device Gemma prepared this draft because local OCR did not find enough ledger lines.',
         };
-      } catch { /* keep the local failure */ }
+      } catch (error) {
+        const { gemmaMediaErrorMessage } = await import('./gemma/mediaTasks');
+        throw new Error(gemmaMediaErrorMessage(error));
+      }
     }
     throw new Error(local.failure || 'The document needs more information before Ledgr can prepare a draft.');
   }
