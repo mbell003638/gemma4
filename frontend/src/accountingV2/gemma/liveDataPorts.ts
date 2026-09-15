@@ -23,7 +23,8 @@ function parseJson(raw: unknown): Json {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   } catch { return {}; }
 }
-function active(meta: Json): boolean { return meta.deleted !== true && meta.reversed !== true; }
+function flag(value: unknown): boolean { return value === true || value === 1 || value === '1'; }
+function active(meta: Json): boolean { return !flag(meta.deleted) && !flag(meta.reversed); }
 function loc(location: LocationScope, alias: string): { sql: string; params: string[] } {
   if (location.kind === 'company') return { sql: '', params: [] };
   if (!location.ids.length) throw new Error('NO_AUTHORIZED_LOCATION');
@@ -40,6 +41,12 @@ function paged<T extends { id: string; date?: string }>(rows: T[], page: PageReq
   const sliced = rows.slice(0, page.limit);
   const last = sliced[sliced.length - 1];
   return { rows: sliced, nextAnchor: rows.length > page.limit && last ? `${last.date || ''}|${last.id}` : null };
+}
+function nameStart<T extends { id: string }>(rows: T[], after: string | null): number {
+  if (!after) return 0;
+  const index = rows.findIndex(row => `|${row.id}` === after);
+  if (index < 0) throw new Error('STALE_CURSOR');
+  return index + 1;
 }
 async function check(guard: ReportReadGuard, scope: Scope): Promise<void> {
   await guard.assertCurrent(scope);
@@ -98,8 +105,8 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
         [...l.params, scope.bookId, query.text || '', `%${(query.text || '').toLowerCase()}%`],
       );
       const filtered = rows.filter(row => query.role === 'any' || parseJsonArray(row.roles).includes(query.role));
-      const start = page.after ? filtered.findIndex(row => `|${row.id}` === page.after) + 1 : 0;
-      const window = filtered.slice(Math.max(0, start), Math.max(0, start) + page.limit + 1);
+      const start = nameStart(filtered, page.after);
+      const window = filtered.slice(start, start + page.limit + 1);
       const output = window.map((row): PartySummary => ({ id: row.id, name: row.name, roles: parseJsonArray(row.roles), receivable: Number(row.receivable), payable: Number(row.payable) }));
       await after(scope);
       const result = paged(output, page);
@@ -168,7 +175,7 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
         'SELECT invoice_source_id,amount FROM v2_invoice_allocations WHERE book_id=? AND receipt_source_id=? ORDER BY allocated_at,id',
         [scope.bookId, id],
       );
-      const reversed = meta.reversed === true || Boolean(await db.first(
+      const reversed = flag(meta.reversed) || Boolean(await db.first(
         'SELECT 1 FROM v2_journal_entries original JOIN v2_journal_entries reversal ON reversal.reversal_of=original.id WHERE original.book_id=? AND original.source_id=? LIMIT 1',
         [scope.bookId, id],
       ));
@@ -179,7 +186,7 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
         revision: await revision(db, scope.bookId, id), subtotal: meta.subtotal == null ? null : Number(meta.subtotal),
         tax: meta.tax == null ? null : Number(meta.tax), status: meta.status ? String(meta.status) : null,
         allocations: allocations.map(item => ({ invoiceId: item.invoice_source_id, amount: Number(item.amount) })),
-        reversed, deleted: meta.deleted === true, editable: active(meta) && !reversed,
+        reversed, deleted: flag(meta.deleted), editable: active(meta) && !reversed,
       } satisfies EntryDetail;
     },
 
@@ -256,8 +263,8 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
         : 'p.qty';
       const rows = await db.all<any>(`SELECT p.id,p.name,p.unit,${qtySql} quantity FROM v2_products p WHERE p.book_id=? AND p.archived=0 AND (?='' OR lower(p.name) LIKE ?) ORDER BY lower(p.name),p.id`,
         [...l, scope.bookId, query.productQuery || '', `%${(query.productQuery || '').toLowerCase()}%`]);
-      const start = page.after ? rows.findIndex(row => `|${row.id}` === page.after) + 1 : 0;
-      const window = rows.slice(Math.max(0, start), Math.max(0, start) + page.limit + 1);
+      const start = nameStart(rows, page.after);
+      const window = rows.slice(start, start + page.limit + 1);
       const products = paged(window.map(row => ({ id: row.id, name: row.name, unit: row.unit || null, quantity: Number(row.quantity),
         locationId: location.kind === 'locations' && location.ids.length === 1 ? location.ids[0] : null })), page);
       if (window.length > page.limit && products.rows.length) products.nextAnchor = `|${products.rows[products.rows.length - 1].id}`;
@@ -287,7 +294,7 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
         for (const source of sources) {
           const meta = parseJson(source.metadata);
           const matches = meta.memberId === row.id || String(meta.memberName || meta.partnerName || '').trim().toLowerCase() === String(row.name).trim().toLowerCase();
-          if (meta.deleted || meta.reversed || !matches) continue;
+          if (!active(meta) || !matches) continue;
           if (source.type === 'drawing') drawings += round2(Number(meta.total || 0)); else injected += round2(Number(meta.total || 0));
         }
         injected = round2(injected); drawings = round2(drawings);
@@ -297,8 +304,8 @@ export function createLiveDataPorts(db: SqlRunner, permissions: PermissionPorts,
           injected, drawings, currentCapital: round2(openingCapital + injected + profitShare - drawings),
           revision: await revision(db, scope.bookId, row.id) });
       }
-      const start = page.after ? members.findIndex(row => `|${row.id}` === page.after) + 1 : 0;
-      const window = members.slice(Math.max(0, start), Math.max(0, start) + page.limit + 1);
+      const start = nameStart(members, page.after);
+      const window = members.slice(start, start + page.limit + 1);
       const result = paged(window, page);
       if (window.length > page.limit && result.rows.length) result.nextAnchor = `|${result.rows[result.rows.length - 1].id}`;
       await after(scope);

@@ -67,6 +67,7 @@ export async function analyzeDocumentLocalFirst(request: RouteRequest): Promise<
   if (request.mode === 'android-device') {
     const local = await runLocal();
     if ('analysis' in local) return local;
+    // Router has no pack status; Gemma runs only when the caller already gated vision.
     if (request.analyzeOnDevice) {
       try {
         return {

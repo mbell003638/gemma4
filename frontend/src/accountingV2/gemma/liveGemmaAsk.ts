@@ -11,7 +11,7 @@ import { bundle, type BundleId } from './toolBundles';
 import { createProposalTools } from './proposalRegistry';
 import { validateAssistantProposal } from '../aiActions';
 import { LIVE_GEMMA_PROPOSALS } from './liveProposalPolicy';
-import { captureAssistantScope } from './liveProposalController';
+import { captureAssistantScope, enabledFor } from './liveProposalController';
 import { sameScope } from './agentCore';
 
 const cursorStore = createCursorStore();
@@ -55,19 +55,31 @@ export type LiveGemmaAskDeps = {
   run: (tools: Tool[], currentScope: () => Promise<Awaited<ReturnType<typeof buildScope>>>, runtime: InstalledGemmaRuntime, question: string, canPropose: boolean) => Promise<AgentResult>;
 };
 
+const GLOSSARY = 'Sales are income; bills and supplier payments are purchases/payables; Business Accounts are member capital and drawings. Never treat purchases as COGS unless the accounting report does.';
+
+function runLiveAgent(
+  tools: Tool[],
+  currentScope: () => Promise<Awaited<ReturnType<typeof buildScope>>>,
+  runtime: InstalledGemmaRuntime,
+  question: string,
+  canPropose: boolean,
+  requestId: string,
+): Promise<AgentResult> {
+  return createAgent(runtime.engine)({
+    requestId,
+    modelId: runtime.modelId,
+    question,
+    glossary: GLOSSARY,
+    tools,
+    currentScope,
+    canPropose,
+  });
+}
+
 const productionDeps: LiveGemmaAskDeps = {
   runtime: installedGemmaRuntime,
-  run: async (tools, currentScope, runtime, question, canPropose) => {
-    return createAgent(runtime.engine)({
-      requestId: `ask-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      modelId: runtime.modelId,
-      question,
-      glossary: 'Sales are income; bills and supplier payments are purchases/payables; Business Accounts are member capital and drawings. Never treat purchases as COGS unless the accounting report does.',
-      tools,
-      currentScope,
-      canPropose,
-    });
-  },
+  run: async (tools, currentScope, runtime, question, canPropose) =>
+    runLiveAgent(tools, currentScope, runtime, question, canPropose, `ask-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
 };
 
 /** Runs Gemma over scoped tools only. No serialized whole-book snapshot is supplied. */
@@ -93,23 +105,13 @@ export function chooseGemmaProposalFamily(question: string): keyof typeof PROPOS
   return null;
 }
 
-function enabledFor(operation: string, scope: Awaited<ReturnType<typeof buildScope>>): boolean {
-  const enabled = new Set(enabledFromEpoch(scope.featureEpoch));
-  if (['add_expense', 'log_personal_expense'].includes(operation)) return enabled.has('expenses');
-  if (['add_sale', 'add_debtor_payment'].includes(operation)) return enabled.has('sales') || enabled.has('parties');
-  if (['add_bill', 'create_supplier_payment'].includes(operation)) return enabled.has('bills') || enabled.has('purchases');
-  if (['create_invoice', 'create_receipt'].includes(operation)) return enabled.has('invoices') || enabled.has('receipts');
-  if (['add_capital', 'create_drawing'].includes(operation)) return true;
-  if (['add_debtor', 'add_supplier'].includes(operation)) return true;
-  return operation === 'record_inventory' && enabled.has('inventory');
-}
-
 export async function askWithLiveGemma(
   question: string,
   allowProposals = false,
   deps: LiveGemmaAskDeps = productionDeps,
 ): Promise<AgentResult | null> {
   const originScope = Object.freeze({ ...await (deps.captureScope ?? captureAssistantScope)() });
+  const requestId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const runtime = await deps.runtime();
   if (!sameScope(originScope, await (deps.captureScope ?? captureAssistantScope)())) {
     return { kind: 'stopped', code: 'STALE_SCOPE' };
@@ -216,6 +218,9 @@ export async function askWithLiveGemma(
       },
     }).filter((tool) => LIVE_GEMMA_PROPOSALS.has(tool.name) && selected.has(tool.name));
     tools.push(...proposals.slice(0, Math.max(0, 8 - tools.length)));
+  }
+  if (deps.run === productionDeps.run) {
+    return runLiveAgent(tools, currentScope, runtime, question, allowProposals, requestId);
   }
   return deps.run(tools, currentScope, runtime, question, allowProposals);
 }

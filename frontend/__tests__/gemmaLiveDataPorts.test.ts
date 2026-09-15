@@ -202,6 +202,7 @@ test.each(['standard', 'retail_partnership'] as const)('A09 %s carried capital, 
     ['legacy-partner', { partnerName: 'Owner', total: 0.105 }],
     ['boolean-deleted', { memberId: 'member-a', total: 800, deleted: true }],
     ['numeric-reversed', { memberId: 'member-a', total: 800, reversed: 1 }],
+    ['string-deleted', { memberId: 'member-a', total: 800, deleted: '1' }],
     ['different-member', { memberId: 'elsewhere', total: 800 }],
   ] as const) {
     await db.run("INSERT INTO v2_sources(id,book_id,type,date,metadata) VALUES(?,'a','capital_injection','2026-03-15',?)", [id, JSON.stringify(metadata)]);
@@ -290,4 +291,41 @@ test('paging is anchored and bounded', async () => {
   expect(first.nextAnchor).not.toBeNull();
   const second = await ports.parties({ text: null, role: 'any' }, { kind: 'company' }, scope, { after: first.nextAnchor, limit: 1 });
   expect(second.rows[0].id).not.toBe(first.rows[0].id);
+});
+
+test('name-ordered lists throw STALE_CURSOR when the after id is gone', async () => {
+  const { ports } = await setup();
+  await expect(ports.parties({ text: null, role: 'any' }, { kind: 'company' }, scope, { after: '|missing-party', limit: 1 })).rejects.toThrow('STALE_CURSOR');
+  await expect(ports.inventory({ productQuery: null }, { kind: 'company' }, scope, { after: '|missing-product', limit: 1 })).rejects.toThrow('STALE_CURSOR');
+  await expect(ports.businessAccounts({ memberId: null }, { kind: 'company' }, scope, { after: '|missing-member', limit: 1 })).rejects.toThrow('STALE_CURSOR');
+});
+
+test('numeric reverse and delete flags hide live documents and inventory activity', async () => {
+  const { db, repo, ports } = await setup();
+  const post = (id: string, type: V2Source['type'], total: number, partyId: string, lines: V2JournalEntry['lines']) => repo.postSourceJournal(
+    { id, bookId: 'a', type, date: '2026-03-01', locationId: 'shop-a', metadata: { total, partyId } },
+    { id: id + '-j', bookId: 'a', periodId: 'a-p', date: '2026-03-01', memo: id, lines },
+  );
+  await post('inv-rev', 'invoice', 50, 'cust-a', [
+    { accountId: 'a:account:1100', partyId: 'cust-a', debit: 50, credit: 0 }, { accountId: 'a:account:4000', debit: 0, credit: 50 },
+  ]);
+  await post('inv-del', 'invoice', 50, 'cust-a', [
+    { accountId: 'a:account:1100', partyId: 'cust-a', debit: 50, credit: 0 }, { accountId: 'a:account:4000', debit: 0, credit: 50 },
+  ]);
+  await post('buy-live', 'cash_purchase', 15, 'supplier-a', [
+    { accountId: 'a:account:6000', debit: 15, credit: 0 }, { accountId: 'a:account:1000', debit: 0, credit: 15 },
+  ]);
+  await post('buy-rev', 'cash_purchase', 800, 'supplier-a', [
+    { accountId: 'a:account:6000', debit: 800, credit: 0 }, { accountId: 'a:account:1000', debit: 0, credit: 800 },
+  ]);
+  await db.run("UPDATE v2_sources SET metadata=json_set(metadata,'$.reversed',1) WHERE id IN ('inv-rev','buy-rev')");
+  await db.run("UPDATE v2_sources SET metadata=json_set(metadata,'$.deleted','1') WHERE id='inv-del'");
+  const entries = await ports.entries({ entity: 'invoice', range: { from: '2026-01-01', to: '2026-12-31' }, text: null }, { kind: 'company' }, scope, { after: null, limit: 25 });
+  expect(entries.rows.map(row => row.id)).toEqual(['inv-a']);
+  const unpaid = await ports.unpaidInvoices({ partyId: 'cust-a' }, { kind: 'company' }, scope, { after: null, limit: 25 });
+  expect(unpaid?.rows.map(row => row.id)).toEqual(['inv-a']);
+  expect(await ports.entry('invoice', 'inv-rev', { kind: 'company' }, scope)).toMatchObject({ reversed: true, editable: false });
+  expect(await ports.entry('invoice', 'inv-del', { kind: 'company' }, scope)).toMatchObject({ deleted: true, editable: false });
+  const inventory = await ports.inventory({ productQuery: null }, { kind: 'company' }, scope, { after: null, limit: 25 });
+  expect(inventory.valuation).toMatchObject({ purchasesSince: 15, salesSince: 100 });
 });

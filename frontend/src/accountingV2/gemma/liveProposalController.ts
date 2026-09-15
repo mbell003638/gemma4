@@ -17,6 +17,25 @@ async function currentScope(): Promise<Scope> { return buildScope(liveScopePorts
 export type DurableProposalPreview = { id: string; preview: string; destructive: boolean };
 
 export async function captureAssistantScope(): Promise<Scope> { return { ...await currentScope() }; }
+
+function featuresFromEpoch(epoch: string): string[] {
+  try {
+    const value: unknown = JSON.parse(epoch);
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  } catch { return []; }
+}
+
+export function enabledFor(operation: string, scope: Scope): boolean {
+  const enabled = new Set(featuresFromEpoch(scope.featureEpoch));
+  if (['add_expense', 'log_personal_expense'].includes(operation)) return enabled.has('expenses');
+  if (['add_sale', 'add_debtor_payment'].includes(operation)) return enabled.has('sales');
+  if (['add_bill', 'create_supplier_payment'].includes(operation)) return enabled.has('bills') || enabled.has('purchases');
+  if (['create_invoice', 'create_receipt'].includes(operation)) return enabled.has('invoices') || enabled.has('receipts');
+  if (['add_capital', 'create_drawing'].includes(operation)) return enabled.has('businessAccounts');
+  if (['add_debtor', 'add_supplier'].includes(operation)) return enabled.has('parties');
+  return operation === 'record_inventory' && enabled.has('inventory');
+}
+
 export async function assistantScopeIsCurrent(scope: Scope, afterWrite = false): Promise<boolean> {
   try {
     const current = await currentScope();
@@ -67,7 +86,10 @@ function executorPorts(runner: ReturnType<typeof db>) {
       const date = String(normalized.date || scope.today);
       return Boolean(await runner.first("SELECT 1 ok FROM v2_periods WHERE book_id=? AND status='open' AND start_date<=? AND end_date>=? LIMIT 1", [scope.bookId, date, date]));
     },
-    canApply: async (operation: string, expected: Scope) => LIVE_GEMMA_PROPOSALS.has(operation) && sameScope(expected, await currentScope()),
+    canApply: async (operation: string, expected: Scope) => {
+      const current = await currentScope();
+      return LIVE_GEMMA_PROPOSALS.has(operation) && sameScope(expected, current) && enabledFor(operation, current);
+    },
     apply: async (operation: string, normalized: Obj, scope: Scope, tx: ReturnType<typeof db>) => {
       const { createTransactionActionPort } = await import('./transactionActionPort');
       return createTransactionActionPort()(operation, normalized, scope, tx);

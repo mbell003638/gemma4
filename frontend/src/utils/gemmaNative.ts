@@ -152,6 +152,7 @@ export async function gemmaPackStatus(): Promise<GemmaRuntimeStatus> {
 /** True only when native verified the modality and a checksum-verified pack is ready. */
 export function hasReadyGemmaCapability(status: GemmaRuntimeStatus, capability: 'text' | 'tools' | 'vision' | 'audio'): boolean {
   return status.supported
+    && supportsGemmaBridge({ gemmaBridgeVersion: status.bridgeVersion })
     && !status.recoveryRequired
     && !status.managementOperation
     && gemmaRecoveryRequest() === null
@@ -176,7 +177,7 @@ export async function installedGemmaRuntime(): Promise<InstalledGemmaRuntime | n
   const capabilities = Array.isArray(status.gemmaCapabilities) ? status.gemmaCapabilities : [];
   if (!capabilities.includes('text') || !capabilities.includes('tools')) return null;
   const packs = status.gemmaPacks || {};
-  const modelId = ['gemma4-e4b', 'gemma4-e2b'].find((id) => packs[id]?.state === 'ready');
+  const modelId = ['gemma4-e2b', 'gemma4-e4b'].find((id) => packs[id]?.state === 'ready');
   return modelId ? { modelId, engine: createGemmaEngine(native as GemmaNative) } : null;
 }
 
